@@ -426,6 +426,7 @@ function attemptAttack() {
             
             if (dist < weapon.range) {
                 currentMonster.health -= weapon.damage;
+                checkMonsterDeath();
             }
             player.attackCooldown = weapon.cooldown;
         } else {
@@ -466,6 +467,7 @@ function updateProjectiles() {
             if (isHit) {
                 currentMonster.health -= p.damage;
                 projectiles.splice(i, 1);
+                checkMonsterDeath();
             }
         } else {
             const isHit = 
@@ -507,7 +509,7 @@ function drawWeaponSelection() {
     for (let i = 0; i < weapons.length; i++) {
         const bx = startX + i * (buttonWidth + spacing);
         const by = startY;
-        const isSelected = i === selectedWeaponIndex;
+        const isSelected = i === selectedWeapronIndex;
         
         ctx.fillStyle = isSelected ? '#00ff00' : '#003300';
         ctx.fillRect(bx, by, buttonWidth, buttonHeight);
@@ -547,14 +549,20 @@ function updateUI() {
 function spawnNewMonster() {
     monstersDefeated++;
     defeatedTotal++;
-    if (monstersDefeated >= 3) {
+    // A cada 3 monstros derrotados, avançar de fase, sem resetar o contador
+    if (monstersDefeated % 3 === 0) {
         phase++;
-        monstersDefeated = 0;
     }
     projectiles = [];
     currentMonster = new Monster(phase);
     isUpgrading = true;
     selectedUpgradeIndex = 0;
+}
+
+function checkMonsterDeath() {
+    if (currentMonster.health <= 0 && !isUpgrading && !gameOver) {
+        spawnNewMonster();
+    }
 }
 
 function getCombinedUpgrades() {
@@ -731,9 +739,7 @@ function gameLoop() {
         }
 
         // Verificar morte do monstro
-        if (currentMonster.health <= 0) {
-            spawnNewMonster();
-        }
+        checkMonsterDeath();
 
         // Verificar morte do jogador
         if (player.health <= 0) {

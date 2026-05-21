@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Caçador de Monstros</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="hud">
+            <div class="hudSection">
+                <span>Vida:</span>
+                <div id="playerHealth" class="healthBar"></div>
+            </div>
+            <div class="hudSection">
+                <span>Monstro:</span>
+                <div id="monsterHealth" class="healthBar"></div>
+            </div>
+            <div class="hudSection">
+                <span id="phaseDisplay">Fase: 1</span>
+            </div>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="gameInfo">
+            <p id="instructions">Escolha sua arma | Use WASD ou Setas para mover | Clique ou Espaço para atacar</p>
+            <div id="statsDisplay"></div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

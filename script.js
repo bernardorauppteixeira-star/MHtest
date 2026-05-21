@@ -8,7 +8,7 @@ canvas.height = gameHeight;
 
 // ===== CLASSES DO JOGO =====
 class Projectile {
-    constructor(x, y, targetX, targetY, damage, color, speed) {
+    constructor(x, y, targetX, targetY, damage, color, speed, owner = 'player') {
         this.x = x;
         this.y = y;
         this.size = 8;
@@ -19,6 +19,7 @@ class Projectile {
         this.vy = (dy / dist) * speed;
         this.damage = damage;
         this.color = color;
+        this.owner = owner;
         this.maxDistance = 800;
         this.traveled = 0;
     }
@@ -44,16 +45,16 @@ class Projectile {
 class Player {
     constructor() {
         this.x = gameWidth / 2;
-        this.y = gameHeight - 100;
-        this.width = 30;
-        this.height = 40;
+        this.y = gameHeight - 150;
+        this.width = 15;
+        this.height = 20;
         this.speed = 5;
         this.health = 100;
         this.maxHealth = 100;
         this.attackCooldown = 0;
         this.attacking = false;
         this.attackRange = 80;
-        this.baseDamage = 5;
+        this.baseDamage = 3.5;
         this.totalUpgrades = 0;
         this.weapon = null;
     }
@@ -98,18 +99,45 @@ class Player {
 }
 
 class Monster {
-    constructor(phase) {
+    constructor(phase, type = null) {
         this.phase = phase;
+        this.type = type || this.chooseType();
         this.width = 80 + phase * 20;
         this.height = 100 + phase * 20;
         this.x = Math.random() * (gameWidth - this.width);
         this.y = 50 + Math.random() * 100;
-        this.health = 50 + phase * 30;
-        this.maxHealth = this.health;
-        this.speed = 1 + phase * 0.5;
         this.attackRange = 120;
         this.attackCooldown = 0;
+        this.shootCooldown = 0;
+        this.dashCooldown = 0;
+        this.dashTimer = 0;
         this.direction = Math.random() > 0.5 ? 1 : -1;
+
+        if (this.type === 'shooter') {
+            this.health = 35 + phase * 15;
+            this.speed = 1 + phase * 0.15;
+            this.maxHealth = this.health;
+            this.desiredDistance = 250;
+            this.projectileSpeed = 6 + phase * 0.5;
+        } else if (this.type === 'tank') {
+            this.health = 90 + phase * 40;
+            this.speed = 0.8 + phase * 0.2;
+            this.maxHealth = this.health;
+            this.dashCooldown = 100;
+            this.dashTimer = 0;
+            this.dashSpeed = 5 + phase * 0.8;
+        } else {
+            this.health = 50 + phase * 30;
+            this.speed = 1 + phase * 0.5;
+            this.maxHealth = this.health;
+        }
+    }
+
+    chooseType() {
+        const roll = Math.random();
+        if (roll < 0.35) return 'shooter';
+        if (roll < 0.65) return 'tank';
+        return 'basic';
     }
 
     update(playerX, playerY) {
@@ -117,11 +145,50 @@ class Monster {
         const dy = playerY - this.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist > this.attackRange) {
-            if (dx > 0) this.x += this.speed;
-            else this.x -= this.speed;
-            if (dy > 0) this.y += this.speed;
-            else this.y -= this.speed;
+        if (this.type === 'shooter') {
+            if (dist < this.desiredDistance * 0.8) {
+                const awayX = (this.x - playerX) / dist;
+                const awayY = (this.y - playerY) / dist;
+                this.x += awayX * this.speed;
+                this.y += awayY * this.speed;
+            } else if (dist > this.desiredDistance + 40) {
+                this.x += (dx / dist) * this.speed * 0.6;
+                this.y += (dy / dist) * this.speed * 0.6;
+            } else {
+                this.x += this.speed * (Math.random() > 0.5 ? 1 : -1);
+            }
+
+            if (this.shootCooldown <= 0) {
+                this.shootProjectile(playerX, playerY);
+                this.shootCooldown = Math.max(50, 90 - this.phase * 10);
+            } else {
+                this.shootCooldown--;
+            }
+        } else if (this.type === 'tank') {
+            if (this.dashTimer > 0) {
+                this.x += (dx / dist) * this.dashSpeed;
+                this.y += (dy / dist) * this.dashSpeed;
+                this.dashTimer--;
+            } else {
+                if (dist > this.attackRange) {
+                    this.x += (dx / dist) * this.speed;
+                    this.y += (dy / dist) * this.speed;
+                }
+
+                if (this.dashCooldown <= 0) {
+                    this.dashTimer = 18;
+                    this.dashCooldown = 140 - this.phase * 10;
+                } else {
+                    this.dashCooldown--;
+                }
+            }
+        } else {
+            if (dist > this.attackRange) {
+                if (dx > 0) this.x += this.speed;
+                else this.x -= this.speed;
+                if (dy > 0) this.y += this.speed;
+                else this.y -= this.speed;
+            }
         }
 
         this.x = Math.max(0, Math.min(this.x, gameWidth - this.width));
@@ -130,20 +197,65 @@ class Monster {
         if (this.attackCooldown > 0) this.attackCooldown--;
     }
 
+    shootProjectile(playerX, playerY) {
+        const shots = Math.floor(Math.random() * 4) + 2;
+        const baseAngle = Math.atan2(playerY - (this.y + this.height / 2), playerX - (this.x + this.width / 2));
+
+        for (let i = 0; i < shots; i++) {
+            const spread = (Math.random() - 0.5) * 0.4;
+            const angle = baseAngle + spread;
+            const targetX = this.x + this.width / 2 + Math.cos(angle) * 100;
+            const targetY = this.y + this.height / 2 + Math.sin(angle) * 100;
+
+            projectiles.push(new Projectile(
+                this.x + this.width / 2,
+                this.y + this.height / 2,
+                targetX,
+                targetY,
+                this.getAttackDamage(),
+                '#00ccff',
+                this.projectileSpeed,
+                'monster'
+            ));
+        }
+    }
+
     draw() {
-        ctx.fillStyle = '#cc0000';
+        if (this.type === 'shooter') {
+            ctx.fillStyle = '#0055cc';
+            ctx.strokeStyle = '#33ccff';
+        } else if (this.type === 'tank') {
+            ctx.fillStyle = '#770000';
+            ctx.strokeStyle = '#ff5555';
+        } else {
+            ctx.fillStyle = '#cc0000';
+            ctx.strokeStyle = '#ff0000';
+        }
+
         ctx.fillRect(this.x, this.y, this.width, this.height);
-        ctx.strokeStyle = '#ff0000';
         ctx.lineWidth = 3;
         ctx.strokeRect(this.x, this.y, this.width, this.height);
 
-        // Olhos
+        if (this.type === 'tank') {
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(this.x + 8, this.y + 12, this.width - 16, 10);
+        }
+
         ctx.fillStyle = '#ffff00';
         ctx.fillRect(this.x + 15, this.y + 20, 12, 12);
         ctx.fillRect(this.x + this.width - 27, this.y + 20, 12, 12);
+
+        if (this.type === 'shooter') {
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(this.x + this.width / 2, this.y + this.height - 18, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 
     getAttackDamage() {
+        if (this.type === 'shooter') return 8 + this.phase * 2;
+        if (this.type === 'tank') return 12 + this.phase * 4;
         return 5 + this.phase * 3;
     }
 }
@@ -153,9 +265,9 @@ let player = new Player();
 let currentMonster = new Monster(1);
 let phase = 1;
 let monstersDefeated = 0;
+let defeatedTotal = 0;
 let keys = {};
 let gameOver = false;
-let victory = false;
 let isUpgrading = false;
 let selectedUpgradeIndex = 0;
 let gameStarted = false;
@@ -164,17 +276,45 @@ let selectedWeaponIndex = 0;
 let projectiles = [];
 
 const weapons = [
-    { name: 'Espada ⚔️', type: 'sword', color: '#ffaa00', cooldown: 20, range: 80, damage: 15 },
-    { name: 'Arco 🏹', type: 'bow', color: '#00ff00', cooldown: 30, range: 600, damage: 12, speed: 5 },
-    { name: 'Varinha 🔮', type: 'staff', color: '#ff00ff', cooldown: 25, range: 600, damage: 14, speed: 6 },
-    { name: 'Revolver 🔫', type: 'gun', color: '#ffff00', cooldown: 15, range: 600, damage: 18, speed: 8 }
+    { name: 'Espada ⚔️', type: 'sword', color: '#ffaa00', cooldown: 20, range: 80, damage: 14 },
+    { name: 'Arco 🏹', type: 'bow', color: '#00ff00', cooldown: 30, range: 300, damage: 12, speed: 5 },
+    { name: 'Varinha 🔮', type: 'staff', color: '#ff00ff', cooldown: 35, range: 200, damage: 15, speed: 6 },
+    { name: 'Revolver 🔫', type: 'gun', color: '#ffff00', cooldown: 12, range: 400, damage: 4, speed: 10 }
 ];
+
+// Itens especiais por tipo de arma (4 para cada)
+const weaponSpecials = {
+    sword: [
+        { name: 'Fúria Crítica', special: true, effect: 'critChance', value: 12, desc: 'Aumenta chance de acerto crítico em 12%.' },
+        { name: 'Sangramento', special: true, effect: 'bleed', value: 3, desc: 'Causa 3 de dano por tick por 5 ticks.' },
+        { name: 'Giro Cortante', special: true, effect: 'spin', value: 1, desc: 'Ataque corpo-a-corpo em área reduzida.' },
+        { name: 'Roubo de Vida', special: true, effect: 'lifeSteal', value: 6, desc: 'Restaura 6% do dano causado.' }
+    ],
+    bow: [
+        { name: 'Tiro Múltiplo', special: true, effect: 'multishot', value: 3, desc: 'Dispara 3 flechas por tiro.' },
+        { name: 'Flechas Perfurantes', special: true, effect: 'piercing', value: 1, desc: 'Projéteis perfuram inimigos.' },
+        { name: 'Ponta Leve', special: true, effect: 'fastArrow', value: 3, desc: 'Aumenta velocidade das flechas.' },
+        { name: 'Flecha Explosiva', special: true, effect: 'explosive', value: 1, desc: 'Projétil explode causando dano em área.' }
+    ],
+    staff: [
+        { name: 'Corrente Elétrica', special: true, effect: 'chain', value: 2, desc: 'Projétil salta entre 2 inimigos.' },
+        { name: 'Rajada Congelante', special: true, effect: 'slow', value: 20, desc: 'Ralentiza inimigos por 20% por alguns segundos.' },
+        { name: 'Estouro Mágico', special: true, effect: 'aoe', value: 1, desc: 'Projétil causa dano em área ao atingir.' },
+        { name: 'Penetração Mágica', special: true, effect: 'magicPen', value: 6, desc: 'Aumenta dano mágico em 6.' }
+    ],
+    gun: [
+        { name: 'Tiro Automático', special: true, effect: 'auto', value: -4, desc: 'Reduz cooldown em 4 (torna semi-automático).' },
+        { name: 'Projéteis Perfurantes', special: true, effect: 'piercing', value: 1, desc: 'Balas perfuram inimigos.' },
+        { name: 'Maior Alcance', special: true, effect: 'range', value: 80, desc: 'Aumenta alcance da arma.' },
+        { name: 'Munição Veloz', special: true, effect: 'bulletSpeed', value: 4, desc: 'Aumenta velocidade das balas.' }
+    ]
+};
 
 const upgradeOptions = [
     { name: 'Vida Máxima +20', effect: 'maxHealth', value: 20 },
     { name: 'Dano +5', effect: 'baseDamage', value: 5 },
     { name: 'Velocidade +1', effect: 'speed', value: 1 },
-    { name: 'Alcance +15', effect: 'attackRange', value: 15 }
+    { name: 'Alcance +15', effect: 'attackRange', value: 45 }
 ];
 
 // ===== EVENT LISTENERS =====
@@ -193,11 +333,12 @@ document.addEventListener('keydown', (e) => {
             selectWeapon(selectedWeaponIndex);
         }
     } else if (isUpgrading) {
+        const combined = getCombinedUpgrades();
         if (e.key === 'ArrowLeft' || e.key === 'a') {
-            selectedUpgradeIndex = (selectedUpgradeIndex - 1 + upgradeOptions.length) % upgradeOptions.length;
+            selectedUpgradeIndex = (selectedUpgradeIndex - 1 + combined.length) % combined.length;
         }
         if (e.key === 'ArrowRight' || e.key === 'd') {
-            selectedUpgradeIndex = (selectedUpgradeIndex + 1) % upgradeOptions.length;
+            selectedUpgradeIndex = (selectedUpgradeIndex + 1) % combined.length;
         }
         if (e.key === ' ' || e.key === 'Enter') {
             e.preventDefault();
@@ -241,14 +382,15 @@ canvas.addEventListener('click', (e) => {
         const clickX = e.clientX - rect.left;
         const clickY = e.clientY - rect.top;
         
+        const combined = getCombinedUpgrades();
         const buttonWidth = 180;
         const buttonHeight = 60;
         const spacing = 20;
-        const totalWidth = upgradeOptions.length * (buttonWidth + spacing);
+        const totalWidth = combined.length * (buttonWidth + spacing);
         const startX = (gameWidth - totalWidth) / 2;
         const startY = gameHeight / 2 - 40;
         
-        for (let i = 0; i < upgradeOptions.length; i++) {
+        for (let i = 0; i < combined.length; i++) {
             const bx = startX + i * (buttonWidth + spacing);
             const by = startY;
             if (clickX >= bx && clickX <= bx + buttonWidth && clickY >= by && clickY <= by + buttonHeight) {
@@ -313,15 +455,29 @@ function updateProjectiles() {
         }
         
         const p = projectiles[i];
-        const isHit = 
-            p.x < currentMonster.x + currentMonster.width &&
-            p.x > currentMonster.x &&
-            p.y < currentMonster.y + currentMonster.height &&
-            p.y > currentMonster.y;
-        
-        if (isHit) {
-            currentMonster.health -= p.damage;
-            projectiles.splice(i, 1);
+
+        if (p.owner === 'player') {
+            const isHit = 
+                p.x < currentMonster.x + currentMonster.width &&
+                p.x > currentMonster.x &&
+                p.y < currentMonster.y + currentMonster.height &&
+                p.y > currentMonster.y;
+            
+            if (isHit) {
+                currentMonster.health -= p.damage;
+                projectiles.splice(i, 1);
+            }
+        } else {
+            const isHit = 
+                p.x < player.x + player.width &&
+                p.x > player.x &&
+                p.y < player.y + player.height &&
+                p.y > player.y;
+            
+            if (isHit) {
+                player.health -= p.damage;
+                projectiles.splice(i, 1);
+            }
         }
     }
 }
@@ -390,27 +546,100 @@ function updateUI() {
 
 function spawnNewMonster() {
     monstersDefeated++;
+    defeatedTotal++;
     if (monstersDefeated >= 3) {
         phase++;
         monstersDefeated = 0;
-        if (phase > 5) {
-            victory = true;
-            return;
-        }
     }
+    projectiles = [];
     currentMonster = new Monster(phase);
     isUpgrading = true;
     selectedUpgradeIndex = 0;
 }
 
-function applyUpgrade(index) {
-    const upgrade = upgradeOptions[index];
-    player[upgrade.effect] += upgrade.value;
-    
-    if (upgrade.effect === 'maxHealth') {
-        player.health += upgrade.value;
+function getCombinedUpgrades() {
+    const combined = [...upgradeOptions];
+    if (player.weapon && weaponSpecials[player.weapon.type]) {
+        const specials = weaponSpecials[player.weapon.type];
+        const guaranteed = defeatedTotal > 0 && defeatedTotal % 10 === 0;
+        const rareChance = 0.12; // 12% chance to show a special normally
+
+        if (guaranteed) {
+            const s = specials[Math.floor(Math.random() * specials.length)];
+            combined.push(s);
+        } else if (Math.random() < rareChance) {
+            const s = specials[Math.floor(Math.random() * specials.length)];
+            combined.push(s);
+        }
     }
-    
+    return combined;
+}
+
+function applySpecial(special) {
+    if (!player.weapon) return;
+    const w = player.weapon;
+    switch (special.effect) {
+        case 'critChance':
+            w.critChance = (w.critChance || 0) + special.value;
+            break;
+        case 'bleed':
+            w.bleed = { damagePerTick: special.value, ticks: 5 };
+            break;
+        case 'spin':
+            w.spin = true;
+            w.range = (w.range || 80) + 20;
+            break;
+        case 'lifeSteal':
+            w.lifeSteal = (w.lifeSteal || 0) + special.value;
+            break;
+        case 'multishot':
+            w.multishot = Math.max(w.multishot || 1, special.value);
+            break;
+        case 'piercing':
+            w.piercing = true;
+            break;
+        case 'fastArrow':
+            w.speed = (w.speed || 5) + special.value;
+            break;
+        case 'explosive':
+            w.explosive = true;
+            break;
+        case 'chain':
+            w.chain = { count: special.value };
+            break;
+        case 'slow':
+            w.slow = special.value;
+            break;
+        case 'aoe':
+            w.aoe = true;
+            break;
+        case 'magicPen':
+            w.damage += special.value;
+            break;
+        case 'auto':
+            w.cooldown = Math.max(1, (w.cooldown || 12) + special.value);
+            break;
+        case 'range':
+            w.range = (w.range || 200) + special.value;
+            break;
+        case 'bulletSpeed':
+            w.speed = (w.speed || 10) + special.value;
+            break;
+    }
+}
+
+function applyUpgrade(index) {
+    const combined = getCombinedUpgrades();
+    const pick = combined[index];
+    if (!pick) return;
+
+    if (pick.special) {
+        applySpecial(pick);
+    } else {
+        player[pick.effect] += pick.value;
+        if (pick.effect === 'maxHealth') player.health += pick.value;
+    }
+
     player.totalUpgrades++;
     isUpgrading = false;
 }
@@ -424,14 +653,15 @@ function drawUpgradeMenu() {
     ctx.textAlign = 'center';
     ctx.fillText('Escolha um Upgrade', gameWidth / 2, 80);
     
+    const combined = getCombinedUpgrades();
     const buttonWidth = 180;
     const buttonHeight = 60;
     const spacing = 20;
-    const totalWidth = upgradeOptions.length * (buttonWidth + spacing);
+    const totalWidth = combined.length * (buttonWidth + spacing);
     const startX = (gameWidth - totalWidth) / 2;
     const startY = gameHeight / 2 - 40;
     
-    for (let i = 0; i < upgradeOptions.length; i++) {
+    for (let i = 0; i < combined.length; i++) {
         const bx = startX + i * (buttonWidth + spacing);
         const by = startY;
         const isSelected = i === selectedUpgradeIndex;
@@ -446,9 +676,18 @@ function drawUpgradeMenu() {
         ctx.fillStyle = '#000000';
         ctx.font = isSelected ? 'bold 14px Arial' : '14px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(upgradeOptions[i].name, bx + buttonWidth / 2, by + buttonHeight / 2 + 5);
+        ctx.fillText(combined[i].name, bx + buttonWidth / 2, by + buttonHeight / 2 + 5);
     }
-    
+
+    // Descrever o item selecionado
+    if (combined[selectedUpgradeIndex]) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'center';
+        const desc = combined[selectedUpgradeIndex].desc || '';
+        ctx.fillText(desc, gameWidth / 2, startY + buttonHeight + 40);
+    }
+
     ctx.fillStyle = '#00d4ff';
     ctx.font = '14px Arial';
     ctx.textAlign = 'center';
@@ -473,7 +712,7 @@ function gameLoop() {
         
         // Desenhar menu de upgrade
         drawUpgradeMenu();
-    } else if (!gameOver && !victory) {
+    } else if (!gameOver) {
         // Atualizar
         player.update(keys);
         currentMonster.update(player.x + player.width / 2, player.y + player.height / 2);
@@ -522,18 +761,7 @@ function gameLoop() {
         ctx.fillText('Recarregue a página para tentar novamente', gameWidth / 2, gameHeight / 2 + 50);
     }
 
-    // Victory
-    if (victory) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, gameWidth, gameHeight);
-        ctx.fillStyle = '#00ff00';
-        ctx.font = 'bold 40px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('VITÓRIA!', gameWidth / 2, gameHeight / 2);
-        ctx.font = '20px Arial';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText('Você derrotou todos os monstros!', gameWidth / 2, gameHeight / 2 + 50);
-    }
+    
 
     requestAnimationFrame(gameLoop);
 }

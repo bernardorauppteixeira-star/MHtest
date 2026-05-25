@@ -509,7 +509,7 @@ function drawWeaponSelection() {
     for (let i = 0; i < weapons.length; i++) {
         const bx = startX + i * (buttonWidth + spacing);
         const by = startY;
-        const isSelected = i === selectedWeapronIndex;
+        const isSelected = i === selectedWeaponIndex;
         
         ctx.fillStyle = isSelected ? '#00ff00' : '#003300';
         ctx.fillRect(bx, by, buttonWidth, buttonHeight);

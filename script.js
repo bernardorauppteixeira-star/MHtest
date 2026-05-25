@@ -317,6 +317,35 @@ const upgradeOptions = [
     { name: 'Alcance +15', effect: 'attackRange', value: 45 }
 ];
 
+const SPECIAL_UPGRADE_CHANCE = 0.25;
+let currentUpgradeChoices = [];
+
+function getRandomUniqueItems(array, count) {
+    const copy = [...array];
+    const result = [];
+    while (result.length < count && copy.length > 0) {
+        const index = Math.floor(Math.random() * copy.length);
+        result.push(copy.splice(index, 1)[0]);
+    }
+    return result;
+}
+
+function prepareUpgradeChoices() {
+    if (!player.weapon || !weaponSpecials[player.weapon.type]) {
+        currentUpgradeChoices = [...upgradeOptions];
+        return;
+    }
+
+    const specials = weaponSpecials[player.weapon.type];
+    const showSpecials = Math.random() < SPECIAL_UPGRADE_CHANCE;
+
+    if (showSpecials) {
+        currentUpgradeChoices = getRandomUniqueItems(specials, Math.min(3, specials.length));
+    } else {
+        currentUpgradeChoices = [...upgradeOptions];
+    }
+}
+
 // ===== EVENT LISTENERS =====
 document.addEventListener('keydown', (e) => {
     keys[e.key.toLowerCase()] = true;
@@ -557,6 +586,7 @@ function spawnNewMonster() {
     currentMonster = new Monster(phase);
     isUpgrading = true;
     selectedUpgradeIndex = 0;
+    prepareUpgradeChoices();
 }
 
 function checkMonsterDeath() {
@@ -566,21 +596,10 @@ function checkMonsterDeath() {
 }
 
 function getCombinedUpgrades() {
-    const combined = [...upgradeOptions];
-    if (player.weapon && weaponSpecials[player.weapon.type]) {
-        const specials = weaponSpecials[player.weapon.type];
-        const guaranteed = defeatedTotal > 0 && defeatedTotal % 10 === 0;
-        const rareChance = 0.12; // 12% chance to show a special normally
-
-        if (guaranteed) {
-            const s = specials[Math.floor(Math.random() * specials.length)];
-            combined.push(s);
-        } else if (Math.random() < rareChance) {
-            const s = specials[Math.floor(Math.random() * specials.length)];
-            combined.push(s);
-        }
+    if (currentUpgradeChoices.length === 0) {
+        prepareUpgradeChoices();
     }
-    return combined;
+    return currentUpgradeChoices;
 }
 
 function applySpecial(special) {

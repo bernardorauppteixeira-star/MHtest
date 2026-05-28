@@ -1,796 +1,916 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const gameWidth = Math.min(800, window.innerWidth - 20);
-const gameHeight = 600;
+const gameWidth = Math.min(1000, window.innerWidth - 24);
+const gameHeight = Math.min(620, window.innerHeight - 24);
+const worldWidth = 1600;
+const worldHeight = 1100;
 canvas.width = gameWidth;
 canvas.height = gameHeight;
 
-// ===== CLASSES DO JOGO =====
-class Projectile {
-    constructor(x, y, targetX, targetY, damage, color, speed, owner = 'player') {
+const camera = {
+    x: 0,
+    y: 0,
+    width: gameWidth,
+    height: gameHeight,
+    update(targetX, targetY) {
+        this.x = targetX - this.width / 2;
+        this.y = targetY - this.height / 2;
+        this.x = Math.max(0, Math.min(this.x, worldWidth - this.width));
+        this.y = Math.max(0, Math.min(this.y, worldHeight - this.height));
+    }
+};
+
+const keys = {};
+let gameOver = false;
+let kills = 0;
+const mouseWorld = { x: 0, y: 0 };
+const projectiles = [];
+
+const weapons = [
+    {
+        id: 'sword',
+        name: 'Espada',
+        type: 'melee',
+        cooldown: 32,
+        damage: 32,
+        range: 130,
+        angle: Math.PI / 3,
+        color: 'rgba(255, 220, 80, 0.18)'
+    },
+    {
+        id: 'staff',
+        name: 'Cajado',
+        type: 'staff',
+        cooldown: 60,
+        minDamage: 5,
+        maxDamage: 45,
+        chargeTime: 45,
+        range: 130,
+        angle: (2 * Math.PI) / 3,
+        color: 'rgba(160, 120, 255, 0.22)'
+    },
+    {
+        id: 'revolver',
+        name: 'Revolver',
+        type: 'revolver',
+        cooldown: 14,
+        damage: 12,
+        speed: 12,
+        radius: 6,
+        color: 'rgba(220, 220, 220, 0.9)'
+    },
+    {
+        id: 'bomb',
+        name: 'Bomba',
+        type: 'bomb',
+        cooldown: 90,
+        damage: 85,
+        radius: 75,
+        speed: 10,
+        color: 'rgba(255, 90, 90, 0.22)'
+    }
+];
+
+const player = {
+    x: worldWidth / 2,
+    y: worldHeight - 180,
+    width: 24,
+    height: 32,
+    speed: 4,
+    health: 100,
+    maxHealth: 100,
+    attacking: false,
+    attackTimer: 0,
+    cooldown: 0,
+    charge: 0,
+    charging: false,
+    attackRange: 130,
+    attackAngle: Math.PI / 3,
+    direction: { x: 0, y: -1 },
+    aimDirection: { x: 0, y: -1 },
+    weapon: weapons[0],
+    hitApplied: false
+};
+
+const enemyTypes = [
+    {
+        id: 'shooter',
+        name: 'Atirador',
+        color: '#64dfff',
+        width: 50,
+        height: 60,
+        speed: 1.4,
+        maxHealth: 140,
+        attackCooldown: 50,
+        bulletDamage: 10,
+        bulletSpeed: 10,
+        bulletRadius: 5,
+        coneAngle: Math.PI / 3,
+        coneRange: 260
+    },
+    {
+        id: 'tank',
+        name: 'Tancudo',
+        color: '#ffb142',
+        width: 76,
+        height: 86,
+        speed: 1.0,
+        maxHealth: 320,
+        attackCooldown: 90,
+        coneDamage: 18,
+        coneAngle: Math.PI / 2,
+        coneRange: 160
+    },
+    {
+        id: 'mage',
+        name: 'Mago',
+        color: '#b07cff',
+        width: 56,
+        height: 70,
+        speed: 1.1,
+        maxHealth: 180,
+        attackCooldown: 100,
+        boltDamage: 18,
+        boltSpeed: 11,
+        boltRadius: 6,
+        explosionDamage: 32,
+        explosionRadius: 72,
+        bombSpeed: 8
+    }
+];
+
+let enemy = {};
+
+const upgrades = [
+    {
+        id: 'health',
+        name: 'Mais Vida',
+        description: '+20 de vida máxima',
+        apply() {
+            player.maxHealth += 20;
+            player.health = Math.min(player.health + 20, player.maxHealth);
+        }
+    },
+    {
+        id: 'speed',
+        name: 'Velocidade',
+        description: '+0.3 de velocidade',
+        apply() {
+            player.speed += 0.3;
+        }
+    },
+    {
+        id: 'damage',
+        name: 'Mais Dano',
+        description: '+3 de dano em todas as armas',
+        apply() {
+            weapons.forEach((weapon) => {
+                if (weapon.damage) weapon.damage += 3;
+                if (weapon.minDamage) weapon.minDamage += 3;
+                if (weapon.maxDamage) weapon.maxDamage += 3;
+            });
+        }
+    },
+    {
+        id: 'attackSpeed',
+        name: 'Vel. de Ataque',
+        description: '-4 frames de cooldown',
+        apply() {
+            weapons.forEach((weapon) => {
+                if (weapon.cooldown) weapon.cooldown = Math.max(6, weapon.cooldown - 4);
+            });
+        }
+    },
+    {
+        id: 'bulletSize',
+        name: 'Projéteis Maiores',
+        description: '+2 ao tamanho do projétil',
+        apply() {
+            weapons.forEach((weapon) => {
+                if (weapon.radius) weapon.radius += 2;
+            });
+        }
+    },
+    {
+        id: 'explosionArea',
+        name: 'Explosão Maior',
+        description: '+12 de área de explosão',
+        apply() {
+            weapons.forEach((weapon) => {
+                if (weapon.id === 'bomb') weapon.radius += 12;
+            });
+        }
+    },
+    {
+        id: 'range',
+        name: 'Alcance',
+        description: '+14 de alcance',
+        apply() {
+            weapons.forEach((weapon) => {
+                if (weapon.range) weapon.range += 14;
+            });
+        }
+    }
+];
+
+const upgradeMenu = {
+    active: false,
+    options: []
+};
+
+const playerHealthBar = document.getElementById('playerHealth');
+const monsterHealthBar = document.getElementById('monsterHealth');
+const weaponDisplayText = document.getElementById('weaponDisplay');
+const killCountText = document.getElementById('killCount');
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function restartGame() {
+    player.x = worldWidth / 2;
+    player.y = worldHeight - 180;
+    player.health = player.maxHealth;
+    player.attacking = false;
+    player.attackTimer = 0;
+    player.cooldown = 0;
+    player.charge = 0;
+    player.charging = false;
+    player.hitApplied = false;
+    player.direction = { x: 0, y: -1 };
+    kills = 0;
+    gameOver = false;
+    spawnEnemy();
+    updateUI();
+}
+
+function spawnEnemy() {
+    const template = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+    enemy = {
+        ...template,
+        type: template.id,
+        x: Math.random() * (worldWidth - template.width),
+        y: Math.random() * 120 + 40,
+        health: template.maxHealth,
+        attackCooldown: 0,
+        attackCooldownBase: template.attackCooldown,
+        attackTimer: 0,
+        attackPattern: '',
+        burstRemaining: 0
+    };
+}
+
+function presentUpgradeMenu() {
+    const pool = [...upgrades];
+    const options = [];
+    while (options.length < 3 && pool.length > 0) {
+        const index = Math.floor(Math.random() * pool.length);
+        options.push(pool.splice(index, 1)[0]);
+    }
+    upgradeMenu.active = true;
+    upgradeMenu.options = options;
+}
+
+function handleEnemyDeath() {
+    enemy.health = 0;
+    kills += 1;
+    if (Math.random() < 0.65) {
+        presentUpgradeMenu();
+    } else {
+        spawnEnemy();
+    }
+}
+
+function startAttack() {
+    if (gameOver || player.cooldown > 0 || player.attacking) return;
+    const weapon = player.weapon;
+    if (weapon.type === 'staff') {
+        player.charging = true;
+        player.charge = 0;
+        player.hitApplied = false;
+        return;
+    }
+
+    if (weapon.type === 'revolver') {
+        fireBullet();
+        player.cooldown = weapon.cooldown;
+        return;
+    }
+
+    if (weapon.type === 'bomb') {
+        throwBomb();
+        player.cooldown = weapon.cooldown;
+        return;
+    }
+
+    player.attacking = true;
+    player.attackTimer = 18;
+    player.hitApplied = false;
+    player.cooldown = weapon.cooldown;
+}
+
+function releaseAttack() {
+    if (!player.charging || gameOver) return;
+    const weapon = player.weapon;
+    if (weapon.type === 'staff') {
+        const chargePercent = Math.min(player.charge / weapon.chargeTime, 1);
+        const damage = Math.round(weapon.minDamage + (weapon.maxDamage - weapon.minDamage) * chargePercent);
+        player.attacking = true;
+        player.attackTimer = 18;
+        player.hitApplied = false;
+        player.cooldown = weapon.cooldown;
+        player.staffDamage = damage;
+    }
+    player.charging = false;
+    player.charge = 0;
+}
+
+function updatePlayer() {
+    let moveX = 0;
+    let moveY = 0;
+    if (keys['w'] || keys['arrowup']) moveY -= 1;
+    if (keys['s'] || keys['arrowdown']) moveY += 1;
+    if (keys['a'] || keys['arrowleft']) moveX -= 1;
+    if (keys['d'] || keys['arrowright']) moveX += 1;
+    if (moveX !== 0 || moveY !== 0) {
+        const length = Math.sqrt(moveX * moveX + moveY * moveY);
+        player.direction.x = moveX / length;
+        player.direction.y = moveY / length;
+        player.x += player.direction.x * player.speed;
+        player.y += player.direction.y * player.speed;
+    }
+    player.x = clamp(player.x, 0, worldWidth - player.width);
+    player.y = clamp(player.y, 0, worldHeight - player.height);
+
+    if (player.cooldown > 0) {
+        player.cooldown -= 1;
+    }
+
+    if (player.charging) {
+        player.charge = Math.min(player.charge + 1, player.weapon.chargeTime);
+    }
+
+    if (player.attacking) {
+        player.attackTimer -= 1;
+        if (player.attackTimer === 8 && !player.hitApplied) {
+            const weapon = player.weapon;
+            if (weapon.type === 'staff') {
+                applyWeaponHit(player.staffDamage, weapon.range, weapon.angle);
+            } else {
+                applyWeaponHit(weapon.damage, weapon.range, weapon.angle);
+            }
+            player.hitApplied = true;
+        }
+        if (player.attackTimer <= 0) {
+            player.attacking = false;
+        }
+    }
+}
+
+function updateAimDirection() {
+    const originX = player.x + player.width / 2;
+    const originY = player.y + player.height / 2;
+    const dx = mouseWorld.x - originX;
+    const dy = mouseWorld.y - originY;
+    const length = Math.sqrt(dx * dx + dy * dy) || 1;
+    player.aimDirection.x = dx / length;
+    player.aimDirection.y = dy / length;
+}
+
+function updateEnemy() {
+    if (enemy.health <= 0) return;
+    const originX = enemy.x + enemy.width / 2;
+    const originY = enemy.y + enemy.height / 2;
+    const targetX = player.x + player.width / 2;
+    const targetY = player.y + player.height / 2;
+    const dx = targetX - originX;
+    const dy = targetY - originY;
+    const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+    const dirX = dx / distance;
+    const dirY = dy / distance;
+
+    if (enemy.type === 'shooter') {
+        if (distance > 260) {
+            enemy.x += dirX * enemy.speed;
+            enemy.y += dirY * enemy.speed;
+        } else if (distance < 150) {
+            enemy.x -= dirX * enemy.speed;
+            enemy.y -= dirY * enemy.speed;
+        }
+    } else if (enemy.type === 'tank' || enemy.type === 'mage') {
+        if (distance > 120) {
+            enemy.x += dirX * enemy.speed;
+            enemy.y += dirY * enemy.speed;
+        }
+    }
+
+    enemy.x = clamp(enemy.x, 0, worldWidth - enemy.width);
+    enemy.y = clamp(enemy.y, 0, worldHeight - enemy.height);
+
+    if (enemy.attackTimer > 0) {
+        enemy.attackTimer -= 1;
+        if (enemy.type === 'shooter' && enemy.attackPattern === 'burst' && enemy.attackTimer === 0 && enemy.burstRemaining > 0) {
+            fireEnemyBullet();
+            enemy.burstRemaining -= 1;
+            if (enemy.burstRemaining > 0) enemy.attackTimer = 4;
+        }
+    }
+
+    if (enemy.attackCooldown > 0) {
+        enemy.attackCooldown -= 1;
+    }
+
+    if (enemy.attackCooldown <= 0 && enemy.attackTimer === 0) {
+        if (enemy.type === 'shooter') {
+            enemy.attackPattern = Math.random() < 0.5 ? 'cone' : 'burst';
+            const shots = Math.floor(Math.random() * 11) + 2;
+            if (enemy.attackPattern === 'cone') {
+                fireEnemySpread(shots);
+                enemy.attackCooldown = enemy.attackCooldownBase;
+            } else {
+                enemy.attackPattern = 'burst';
+                enemy.burstRemaining = shots;
+                enemy.attackTimer = 1;
+                enemy.attackCooldown = enemy.attackCooldownBase + 20;
+            }
+        } else if (enemy.type === 'tank') {
+            applyEnemyConeHit(enemy.coneDamage, enemy.coneRange, enemy.coneAngle);
+            enemy.attackCooldown = enemy.attackCooldownBase;
+        } else if (enemy.type === 'mage') {
+            if (Math.random() < 0.5) {
+                fireEnemyBullet();
+                enemy.attackCooldown = enemy.attackCooldownBase;
+            } else {
+                throwEnemyBomb();
+                enemy.attackCooldown = enemy.attackCooldownBase + 20;
+            }
+        }
+    }
+}
+
+function applyWeaponHit(damage, range, angle) {
+    if (enemy.health <= 0) return;
+    const originX = player.x + player.width / 2;
+    const originY = player.y + player.height / 2;
+    const targetX = enemy.x + enemy.width / 2;
+    const targetY = enemy.y + enemy.height / 2;
+    const dx = targetX - originX;
+    const dy = targetY - originY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const directionLength = Math.sqrt(player.aimDirection.x * player.aimDirection.x + player.aimDirection.y * player.aimDirection.y) || 1;
+    const forwardX = player.aimDirection.x / directionLength;
+    const forwardY = player.aimDirection.y / directionLength;
+    const normalizedX = dx / (distance || 1);
+    const normalizedY = dy / (distance || 1);
+    const dot = forwardX * normalizedX + forwardY * normalizedY;
+    if (distance <= range && dot >= Math.cos(angle / 2)) {
+        enemy.health -= damage;
+        if (enemy.health <= 0) {
+            enemy.health = 0;
+            handleEnemyDeath();
+        }
+    }
+}
+
+class BulletProjectile {
+    constructor(x, y, dirX, dirY, damage, speed, radius, owner = 'player') {
         this.x = x;
         this.y = y;
-        this.size = 8;
-        const dx = targetX - x;
-        const dy = targetY - y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        this.vx = (dx / dist) * speed;
-        this.vy = (dy / dist) * speed;
+        this.vx = dirX * speed;
+        this.vy = dirY * speed;
         this.damage = damage;
-        this.color = color;
+        this.radius = radius;
         this.owner = owner;
-        this.maxDistance = 800;
-        this.traveled = 0;
+        this.lifespan = 120;
     }
 
     update() {
         this.x += this.vx;
         this.y += this.vy;
-        this.traveled += Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-    }
-
-    draw() {
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
+        this.lifespan -= 1;
+        const target = this.owner === 'player' ? enemy : player;
+        if (target.health <= 0) return;
+        const centerX = target.x + target.width / 2;
+        const centerY = target.y + target.height / 2;
+        const dx = centerX - this.x;
+        const dy = centerY - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= this.radius + Math.max(target.width, target.height) / 2) {
+            target.health -= this.damage;
+            this.lifespan = 0;
+            if (target.health <= 0) {
+                target.health = 0;
+                if (this.owner === 'player') {
+                    handleEnemyDeath();
+                } else {
+                    gameOver = true;
+                }
+            }
+        }
     }
 
     isAlive() {
-        return this.traveled < this.maxDistance && this.x > 0 && this.x < gameWidth && this.y > 0 && this.y < gameHeight;
-    }
-}
-
-class Player {
-    constructor() {
-        this.x = gameWidth / 2;
-        this.y = gameHeight - 150;
-        this.width = 15;
-        this.height = 20;
-        this.speed = 5;
-        this.health = 100;
-        this.maxHealth = 100;
-        this.attackCooldown = 0;
-        this.attacking = false;
-        this.attackRange = 80;
-        this.baseDamage = 3.5;
-        this.totalUpgrades = 0;
-        this.weapon = null;
-    }
-
-    update(keys) {
-        if (keys['w'] || keys['arrowup']) this.y -= this.speed;
-        if (keys['s'] || keys['arrowdown']) this.y += this.speed;
-        if (keys['a'] || keys['arrowleft']) this.x -= this.speed;
-        if (keys['d'] || keys['arrowright']) this.x += this.speed;
-
-        this.x = Math.max(0, Math.min(this.x, gameWidth - this.width));
-        this.y = Math.max(0, Math.min(this.y, gameHeight - this.height));
-
-        if (this.attackCooldown > 0) this.attackCooldown--;
+        return this.lifespan > 0 && this.x >= 0 && this.x <= worldWidth && this.y >= 0 && this.y <= worldHeight;
     }
 
     draw() {
-        ctx.fillStyle = '#00ff00';
-        ctx.fillRect(this.x, this.y, this.width, this.height);
-        ctx.strokeStyle = '#00aa00';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(this.x, this.y, this.width, this.height);
+        ctx.fillStyle = this.owner === 'player' ? 'rgba(220, 220, 220, 0.9)' : 'rgba(255, 160, 80, 0.9)';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
 
-        if (this.attacking) {
-            ctx.strokeStyle = '#ffff00';
-            ctx.lineWidth = 3;
+class BombProjectile {
+    constructor(x, y, targetX, targetY, damage, radius, speed, owner = 'player') {
+        this.x = x;
+        this.y = y;
+        this.targetX = targetX;
+        this.targetY = targetY;
+        const dx = targetX - x;
+        const dy = targetY - y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        this.vx = (dx / dist) * speed;
+        this.vy = (dy / dist) * speed;
+        this.damage = damage;
+        this.radius = radius;
+        this.speed = speed;
+        this.owner = owner;
+        this.exploded = false;
+        this.explosionTimer = 0;
+    }
+
+    update() {
+        if (this.exploded) {
+            this.explosionTimer -= 1;
+            return;
+        }
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= this.speed) {
+            this.x = this.targetX;
+            this.y = this.targetY;
+            this.explode();
+            return;
+        }
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+
+    explode() {
+        this.exploded = true;
+        this.explosionTimer = 20;
+        const target = this.owner === 'player' ? enemy : player;
+        if (target.health <= 0) return;
+        const dx = target.x + target.width / 2 - this.x;
+        const dy = target.y + target.height / 2 - this.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= this.radius + Math.max(target.width, target.height) / 2) {
+            target.health -= this.damage;
+            if (target.health <= 0) {
+                target.health = 0;
+                if (this.owner === 'player') {
+                    handleEnemyDeath();
+                } else {
+                    gameOver = true;
+                }
+            }
+        }
+    }
+
+    isAlive() {
+        return !this.exploded || this.explosionTimer > 0;
+    }
+
+    draw() {
+        if (this.exploded) {
+            ctx.fillStyle = this.owner === 'player' ? 'rgba(120, 200, 255, 0.22)' : 'rgba(255, 120, 60, 0.25)';
             ctx.beginPath();
-            ctx.arc(this.x + this.width / 2, this.y + this.height / 2, this.attackRange, 0, Math.PI * 2);
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = this.owner === 'player' ? 'rgba(120, 200, 255, 0.5)' : 'rgba(255, 120, 60, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = this.owner === 'player' ? 'rgba(255, 90, 90, 0.9)' : 'rgba(255, 180, 180, 0.9)';
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 10, 0, Math.PI * 2);
             ctx.stroke();
         }
     }
+}
 
-    attack() {
-        if (this.attackCooldown === 0) {
-            this.attacking = true;
-            this.attackCooldown = 20;
-            setTimeout(() => { this.attacking = false; }, 100);
-            return true;
-        }
-        return false;
+function fireBullet() {
+    const originX = player.x + player.width / 2;
+    const originY = player.y + player.height / 2;
+    const dirX = player.aimDirection.x;
+    const dirY = player.aimDirection.y;
+    const weapon = player.weapon;
+    const bullet = new BulletProjectile(originX, originY, dirX, dirY, weapon.damage, weapon.speed, weapon.radius, 'player');
+    projectiles.push(bullet);
+}
+
+function throwBomb() {
+    const originX = player.x + player.width / 2;
+    const originY = player.y + player.height / 2;
+    const weapon = player.weapon;
+    const bomb = new BombProjectile(originX, originY, mouseWorld.x, mouseWorld.y, weapon.damage, weapon.radius, weapon.speed, 'player');
+    projectiles.push(bomb);
+}
+
+function fireEnemyBullet() {
+    const originX = enemy.x + enemy.width / 2;
+    const originY = enemy.y + enemy.height / 2;
+    const targetX = player.x + player.width / 2;
+    const targetY = player.y + player.height / 2;
+    const dx = targetX - originX;
+    const dy = targetY - originY;
+    const length = Math.sqrt(dx * dx + dy * dy) || 1;
+    const damage = enemy.type === 'mage' ? enemy.boltDamage : enemy.bulletDamage;
+    const speed = enemy.type === 'mage' ? enemy.boltSpeed : enemy.bulletSpeed;
+    const radius = enemy.type === 'mage' ? enemy.boltRadius : enemy.bulletRadius;
+    const bullet = new BulletProjectile(originX, originY, dx / length, dy / length, damage, speed, radius, 'enemy');
+    projectiles.push(bullet);
+}
+
+function fireEnemySpread(count) {
+    const originX = enemy.x + enemy.width / 2;
+    const originY = enemy.y + enemy.height / 2;
+    const targetX = player.x + player.width / 2;
+    const targetY = player.y + player.height / 2;
+    const baseAngle = Math.atan2(targetY - originY, targetX - originX);
+    const spread = enemy.coneAngle || Math.PI / 3;
+    for (let i = 0; i < count; i += 1) {
+        const angle = count === 1 ? baseAngle : baseAngle - spread / 2 + (spread * i) / (count - 1);
+        const dirX = Math.cos(angle);
+        const dirY = Math.sin(angle);
+        const damage = enemy.bulletDamage;
+        const bullet = new BulletProjectile(originX, originY, dirX, dirY, damage, enemy.bulletSpeed, enemy.bulletRadius, 'enemy');
+        projectiles.push(bullet);
     }
 }
 
-class Monster {
-    constructor(phase, type = null) {
-        this.phase = phase;
-        this.type = type || this.chooseType();
-        this.width = 80 + phase * 20;
-        this.height = 100 + phase * 20;
-        this.x = Math.random() * (gameWidth - this.width);
-        this.y = 50 + Math.random() * 100;
-        this.attackRange = 120;
-        this.attackCooldown = 0;
-        this.shootCooldown = 0;
-        this.dashCooldown = 0;
-        this.dashTimer = 0;
-        this.direction = Math.random() > 0.5 ? 1 : -1;
+function throwEnemyBomb() {
+    const originX = enemy.x + enemy.width / 2;
+    const originY = enemy.y + enemy.height / 2;
+    const targetX = player.x + player.width / 2;
+    const targetY = player.y + player.height / 2;
+    const bomb = new BombProjectile(originX, originY, targetX, targetY, enemy.explosionDamage, enemy.explosionRadius, enemy.bombSpeed, 'enemy');
+    projectiles.push(bomb);
+}
 
-        if (this.type === 'shooter') {
-            this.health = 35 + phase * 15;
-            this.speed = 1 + phase * 0.15;
-            this.maxHealth = this.health;
-            this.desiredDistance = 250;
-            this.projectileSpeed = 6 + phase * 0.5;
-        } else if (this.type === 'tank') {
-            this.health = 90 + phase * 40;
-            this.speed = 0.8 + phase * 0.2;
-            this.maxHealth = this.health;
-            this.dashCooldown = 100;
-            this.dashTimer = 0;
-            this.dashSpeed = 5 + phase * 0.8;
-        } else {
-            this.health = 50 + phase * 30;
-            this.speed = 1 + phase * 0.5;
-            this.maxHealth = this.health;
+function applyEnemyConeHit(damage, range, angle) {
+    const originX = enemy.x + enemy.width / 2;
+    const originY = enemy.y + enemy.height / 2;
+    const targetX = player.x + player.width / 2;
+    const targetY = player.y + player.height / 2;
+    const dx = targetX - originX;
+    const dy = targetY - originY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const forwardX = dx / (distance || 1);
+    const forwardY = dy / (distance || 1);
+    const playerDirX = forwardX;
+    const playerDirY = forwardY;
+    const normalizedX = dx / (distance || 1);
+    const normalizedY = dy / (distance || 1);
+    const dot = playerDirX * normalizedX + playerDirY * normalizedY;
+    if (distance <= range && dot >= Math.cos(angle / 2)) {
+        player.health -= damage;
+        if (player.health <= 0) {
+            player.health = 0;
+            gameOver = true;
         }
-    }
-
-    chooseType() {
-        const roll = Math.random();
-        if (roll < 0.35) return 'shooter';
-        if (roll < 0.65) return 'tank';
-        return 'basic';
-    }
-
-    update(playerX, playerY) {
-        const dx = playerX - this.x;
-        const dy = playerY - this.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (this.type === 'shooter') {
-            if (dist < this.desiredDistance * 0.8) {
-                const awayX = (this.x - playerX) / dist;
-                const awayY = (this.y - playerY) / dist;
-                this.x += awayX * this.speed;
-                this.y += awayY * this.speed;
-            } else if (dist > this.desiredDistance + 40) {
-                this.x += (dx / dist) * this.speed * 0.6;
-                this.y += (dy / dist) * this.speed * 0.6;
-            } else {
-                this.x += this.speed * (Math.random() > 0.5 ? 1 : -1);
-            }
-
-            if (this.shootCooldown <= 0) {
-                this.shootProjectile(playerX, playerY);
-                this.shootCooldown = Math.max(50, 90 - this.phase * 10);
-            } else {
-                this.shootCooldown--;
-            }
-        } else if (this.type === 'tank') {
-            if (this.dashTimer > 0) {
-                this.x += (dx / dist) * this.dashSpeed;
-                this.y += (dy / dist) * this.dashSpeed;
-                this.dashTimer--;
-            } else {
-                if (dist > this.attackRange) {
-                    this.x += (dx / dist) * this.speed;
-                    this.y += (dy / dist) * this.speed;
-                }
-
-                if (this.dashCooldown <= 0) {
-                    this.dashTimer = 18;
-                    this.dashCooldown = 140 - this.phase * 10;
-                } else {
-                    this.dashCooldown--;
-                }
-            }
-        } else {
-            if (dist > this.attackRange) {
-                if (dx > 0) this.x += this.speed;
-                else this.x -= this.speed;
-                if (dy > 0) this.y += this.speed;
-                else this.y -= this.speed;
-            }
-        }
-
-        this.x = Math.max(0, Math.min(this.x, gameWidth - this.width));
-        this.y = Math.max(0, Math.min(this.y, gameHeight - this.height / 2));
-
-        if (this.attackCooldown > 0) this.attackCooldown--;
-    }
-
-    shootProjectile(playerX, playerY) {
-        const shots = Math.floor(Math.random() * 4) + 2;
-        const baseAngle = Math.atan2(playerY - (this.y + this.height / 2), playerX - (this.x + this.width / 2));
-
-        for (let i = 0; i < shots; i++) {
-            const spread = (Math.random() - 0.5) * 0.4;
-            const angle = baseAngle + spread;
-            const targetX = this.x + this.width / 2 + Math.cos(angle) * 100;
-            const targetY = this.y + this.height / 2 + Math.sin(angle) * 100;
-
-            projectiles.push(new Projectile(
-                this.x + this.width / 2,
-                this.y + this.height / 2,
-                targetX,
-                targetY,
-                this.getAttackDamage(),
-                '#00ccff',
-                this.projectileSpeed,
-                'monster'
-            ));
-        }
-    }
-
-    draw() {
-        if (this.type === 'shooter') {
-            ctx.fillStyle = '#0055cc';
-            ctx.strokeStyle = '#33ccff';
-        } else if (this.type === 'tank') {
-            ctx.fillStyle = '#770000';
-            ctx.strokeStyle = '#ff5555';
-        } else {
-            ctx.fillStyle = '#cc0000';
-            ctx.strokeStyle = '#ff0000';
-        }
-
-        ctx.fillRect(this.x, this.y, this.width, this.height);
-        ctx.lineWidth = 3;
-        ctx.strokeRect(this.x, this.y, this.width, this.height);
-
-        if (this.type === 'tank') {
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(this.x + 8, this.y + 12, this.width - 16, 10);
-        }
-
-        ctx.fillStyle = '#ffff00';
-        ctx.fillRect(this.x + 15, this.y + 20, 12, 12);
-        ctx.fillRect(this.x + this.width - 27, this.y + 20, 12, 12);
-
-        if (this.type === 'shooter') {
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(this.x + this.width / 2, this.y + this.height - 18, 8, 0, Math.PI * 2);
-            ctx.fill();
-        }
-    }
-
-    getAttackDamage() {
-        if (this.type === 'shooter') return 8 + this.phase * 2;
-        if (this.type === 'tank') return 12 + this.phase * 4;
-        return 5 + this.phase * 3;
     }
 }
 
-// ===== VARIÁVEIS GLOBAIS =====
-let player = new Player();
-let currentMonster = new Monster(1);
-let phase = 1;
-let monstersDefeated = 0;
-let defeatedTotal = 0;
-let keys = {};
-let gameOver = false;
-let isUpgrading = false;
-let selectedUpgradeIndex = 0;
-let gameStarted = false;
-let isSelectingWeapon = false;
-let selectedWeaponIndex = 0;
-let projectiles = [];
-
-const weapons = [
-    { name: 'Espada ⚔️', type: 'sword', color: '#ffaa00', cooldown: 20, range: 80, damage: 14 },
-    { name: 'Arco 🏹', type: 'bow', color: '#00ff00', cooldown: 30, range: 300, damage: 12, speed: 5 },
-    { name: 'Varinha 🔮', type: 'staff', color: '#ff00ff', cooldown: 35, range: 200, damage: 15, speed: 6 },
-    { name: 'Revolver 🔫', type: 'gun', color: '#ffff00', cooldown: 12, range: 400, damage: 4, speed: 10 }
-];
-
-// Itens especiais por tipo de arma (4 para cada)
-const weaponSpecials = {
-    sword: [
-        { name: 'Fúria Crítica', special: true, effect: 'critChance', value: 12, desc: 'Aumenta chance de acerto crítico em 12%.' },
-        { name: 'Sangramento', special: true, effect: 'bleed', value: 3, desc: 'Causa 3 de dano por tick por 5 ticks.' },
-        { name: 'Giro Cortante', special: true, effect: 'spin', value: 1, desc: 'Ataque corpo-a-corpo em área reduzida.' },
-        { name: 'Roubo de Vida', special: true, effect: 'lifeSteal', value: 6, desc: 'Restaura 6% do dano causado.' }
-    ],
-    bow: [
-        { name: 'Tiro Múltiplo', special: true, effect: 'multishot', value: 3, desc: 'Dispara 3 flechas por tiro.' },
-        { name: 'Flechas Perfurantes', special: true, effect: 'piercing', value: 1, desc: 'Projéteis perfuram inimigos.' },
-        { name: 'Ponta Leve', special: true, effect: 'fastArrow', value: 3, desc: 'Aumenta velocidade das flechas.' },
-        { name: 'Flecha Explosiva', special: true, effect: 'explosive', value: 1, desc: 'Projétil explode causando dano em área.' }
-    ],
-    staff: [
-        { name: 'Corrente Elétrica', special: true, effect: 'chain', value: 2, desc: 'Projétil salta entre 2 inimigos.' },
-        { name: 'Rajada Congelante', special: true, effect: 'slow', value: 20, desc: 'Ralentiza inimigos por 20% por alguns segundos.' },
-        { name: 'Estouro Mágico', special: true, effect: 'aoe', value: 1, desc: 'Projétil causa dano em área ao atingir.' },
-        { name: 'Penetração Mágica', special: true, effect: 'magicPen', value: 6, desc: 'Aumenta dano mágico em 6.' }
-    ],
-    gun: [
-        { name: 'Tiro Automático', special: true, effect: 'auto', value: -4, desc: 'Reduz cooldown em 4 (torna semi-automático).' },
-        { name: 'Projéteis Perfurantes', special: true, effect: 'piercing', value: 1, desc: 'Balas perfuram inimigos.' },
-        { name: 'Maior Alcance', special: true, effect: 'range', value: 80, desc: 'Aumenta alcance da arma.' },
-        { name: 'Munição Veloz', special: true, effect: 'bulletSpeed', value: 4, desc: 'Aumenta velocidade das balas.' }
-    ]
-};
-
-const upgradeOptions = [
-    { name: 'Vida Máxima +20', effect: 'maxHealth', value: 20 },
-    { name: 'Dano +5', effect: 'baseDamage', value: 5 },
-    { name: 'Velocidade +1', effect: 'speed', value: 1 },
-    { name: 'Alcance +15', effect: 'attackRange', value: 45 }
-];
-
-const SPECIAL_UPGRADE_CHANCE = 0.25;
-let currentUpgradeChoices = [];
-
-function getRandomUniqueItems(array, count) {
-    const copy = [...array];
-    const result = [];
-    while (result.length < count && copy.length > 0) {
-        const index = Math.floor(Math.random() * copy.length);
-        result.push(copy.splice(index, 1)[0]);
+function updateUI() {
+    playerHealthBar.style.width = `${(player.health / player.maxHealth) * 100}%`;
+    monsterHealthBar.style.width = `${(enemy.health / enemy.maxHealth) * 100}%`;
+    weaponDisplayText.textContent = `Arma: ${player.weapon.name}`;
+    if (player.charging && player.weapon.type === 'staff') {
+        weaponDisplayText.textContent += ` (Cargando: ${Math.round((player.charge / player.weapon.chargeTime) * 100)}%)`;
     }
-    return result;
+    killCountText.textContent = `Derrotas: ${kills}`;
 }
 
-function prepareUpgradeChoices() {
-    if (!player.weapon || !weaponSpecials[player.weapon.type]) {
-        currentUpgradeChoices = [...upgradeOptions];
-        return;
-    }
+function drawUpgradeMenu() {
+    const panelWidth = 420;
+    const panelHeight = 240;
+    const x = gameWidth / 2 - panelWidth / 2;
+    const y = gameHeight / 2 - panelHeight / 2;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(x, y, panelWidth, panelHeight);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, panelWidth, panelHeight);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Upgrade disponível', x + panelWidth / 2, y + 38);
+    ctx.font = '16px Arial';
+    ctx.fillText('Escolha uma opção (1-3)', x + panelWidth / 2, y + 64);
+    upgradeMenu.options.forEach((option, index) => {
+        const itemY = y + 100 + index * 44;
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'left';
+        ctx.font = '18px Arial';
+        ctx.fillText(`${index + 1}. ${option.name}`, x + 24, itemY);
+        ctx.font = '14px Arial';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.fillText(option.description, x + 26, itemY + 20);
+    });
+    ctx.restore();
+}
 
-    const specials = weaponSpecials[player.weapon.type];
-    const showSpecials = Math.random() < SPECIAL_UPGRADE_CHANCE;
+function applyUpgrade(upgrade) {
+    upgrade.apply();
+    upgradeMenu.active = false;
+    upgradeMenu.options = [];
+    spawnEnemy();
+}
 
-    if (showSpecials) {
-        currentUpgradeChoices = getRandomUniqueItems(specials, Math.min(3, specials.length));
-    } else {
-        currentUpgradeChoices = [...upgradeOptions];
+function chooseUpgrade(index) {
+    const option = upgradeMenu.options[index];
+    if (option) {
+        applyUpgrade(option);
     }
 }
 
-// ===== EVENT LISTENERS =====
-document.addEventListener('keydown', (e) => {
-    keys[e.key.toLowerCase()] = true;
-    
-    if (isSelectingWeapon) {
-        if (e.key === 'ArrowLeft' || e.key === 'a') {
-            selectedWeaponIndex = (selectedWeaponIndex - 1 + weapons.length) % weapons.length;
-        }
-        if (e.key === 'ArrowRight' || e.key === 'd') {
-            selectedWeaponIndex = (selectedWeaponIndex + 1) % weapons.length;
-        }
-        if (e.key === ' ' || e.key === 'Enter') {
-            e.preventDefault();
-            selectWeapon(selectedWeaponIndex);
-        }
-    } else if (isUpgrading) {
-        const combined = getCombinedUpgrades();
-        if (e.key === 'ArrowLeft' || e.key === 'a') {
-            selectedUpgradeIndex = (selectedUpgradeIndex - 1 + combined.length) % combined.length;
-        }
-        if (e.key === 'ArrowRight' || e.key === 'd') {
-            selectedUpgradeIndex = (selectedUpgradeIndex + 1) % combined.length;
-        }
-        if (e.key === ' ' || e.key === 'Enter') {
-            e.preventDefault();
-            applyUpgrade(selectedUpgradeIndex);
-        }
-    } else {
-        if (e.key === ' ') {
-            e.preventDefault();
-            attemptAttack();
-        }
+function drawBackground() {
+    const gradient = ctx.createLinearGradient(0, 0, 0, worldHeight);
+    gradient.addColorStop(0, '#081222');
+    gradient.addColorStop(1, '#06101a');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, worldWidth, worldHeight);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= worldWidth; x += 160) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, worldHeight);
+        ctx.stroke();
     }
-});
-
-document.addEventListener('keyup', (e) => {
-    keys[e.key.toLowerCase()] = false;
-});
-
-canvas.addEventListener('click', (e) => {
-    if (isSelectingWeapon) {
-        const rect = canvas.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const clickY = e.clientY - rect.top;
-        
-        const buttonWidth = 160;
-        const buttonHeight = 60;
-        const spacing = 15;
-        const totalWidth = weapons.length * (buttonWidth + spacing);
-        const startX = (gameWidth - totalWidth) / 2;
-        const startY = gameHeight / 2 - 40;
-        
-        for (let i = 0; i < weapons.length; i++) {
-            const bx = startX + i * (buttonWidth + spacing);
-            const by = startY;
-            if (clickX >= bx && clickX <= bx + buttonWidth && clickY >= by && clickY <= by + buttonHeight) {
-                selectWeapon(i);
-                break;
-            }
-        }
-    } else if (isUpgrading) {
-        const rect = canvas.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const clickY = e.clientY - rect.top;
-        
-        const combined = getCombinedUpgrades();
-        const buttonWidth = 180;
-        const buttonHeight = 60;
-        const spacing = 20;
-        const totalWidth = combined.length * (buttonWidth + spacing);
-        const startX = (gameWidth - totalWidth) / 2;
-        const startY = gameHeight / 2 - 40;
-        
-        for (let i = 0; i < combined.length; i++) {
-            const bx = startX + i * (buttonWidth + spacing);
-            const by = startY;
-            if (clickX >= bx && clickX <= bx + buttonWidth && clickY >= by && clickY <= by + buttonHeight) {
-                applyUpgrade(i);
-                break;
-            }
-        }
-    } else {
-        attemptAttack();
+    for (let y = 0; y <= worldHeight; y += 160) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(worldWidth, y);
+        ctx.stroke();
     }
-});
-
-// ===== FUNÇÕES DE JOGO =====
-function selectWeapon(index) {
-    player.weapon = weapons[index];
-    isSelectingWeapon = false;
-    gameStarted = true;
+    ctx.strokeStyle = 'rgba(0, 212, 255, 0.18)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(12, 12, worldWidth - 24, worldHeight - 24);
 }
 
-function attemptAttack() {
-    if (!player.weapon) return;
-    
-    if (player.attackCooldown === 0) {
-        const weapon = player.weapon;
-        const targetX = currentMonster.x + currentMonster.width / 2;
-        const targetY = currentMonster.y + currentMonster.height / 2;
-        
-        if (weapon.type === 'sword') {
-            // Ataque melee
-            const dx = targetX - (player.x + player.width / 2);
-            const dy = targetY - (player.y + player.height / 2);
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            
-            if (dist < weapon.range) {
-                currentMonster.health -= weapon.damage;
-                checkMonsterDeath();
-            }
-            player.attackCooldown = weapon.cooldown;
-        } else {
-            // Ataque à distância (projétil)
-            const proj = new Projectile(
-                player.x + player.width / 2,
-                player.y + player.height / 2,
-                targetX,
-                targetY,
-                weapon.damage,
-                weapon.color,
-                weapon.speed
-            );
-            projectiles.push(proj);
-            player.attackCooldown = weapon.cooldown;
-        }
+function drawPlayer() {
+    ctx.fillStyle = '#3dfc51';
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+    ctx.strokeStyle = '#12b944';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(player.x, player.y, player.width, player.height);
+    if (player.attacking && player.weapon.type !== 'bomb') {
+        const centerX = player.x + player.width / 2;
+        const centerY = player.y + player.height / 2;
+        ctx.fillStyle = player.weapon.color;
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        const startAngle = Math.atan2(player.aimDirection.y, player.aimDirection.x) - player.weapon.angle / 2;
+        const endAngle = startAngle + player.weapon.angle;
+        ctx.arc(centerX, centerY, player.weapon.range, startAngle, endAngle);
+        ctx.closePath();
+        ctx.fill();
     }
+    if (player.charging) {
+        const barWidth = 80;
+        const barHeight = 8;
+        const x = player.x + player.width / 2 - barWidth / 2;
+        const y = player.y - 20;
+        const fillWidth = (player.charge / player.weapon.chargeTime) * barWidth;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.fillRect(x, y, barWidth, barHeight);
+        ctx.fillStyle = 'rgba(150, 120, 255, 0.8)';
+        ctx.fillRect(x, y, fillWidth, barHeight);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.strokeRect(x, y, barWidth, barHeight);
+    }
+}
+
+function drawEnemy() {
+    if (enemy.health <= 0) return;
+    ctx.fillStyle = enemy.color;
+    ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(enemy.x, enemy.y, enemy.width, enemy.height);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(enemy.name, enemy.x + enemy.width / 2, enemy.y - 8);
 }
 
 function updateProjectiles() {
     for (let i = projectiles.length - 1; i >= 0; i--) {
         projectiles[i].update();
-        
         if (!projectiles[i].isAlive()) {
             projectiles.splice(i, 1);
-            continue;
-        }
-        
-        const p = projectiles[i];
-
-        if (p.owner === 'player') {
-            const isHit = 
-                p.x < currentMonster.x + currentMonster.width &&
-                p.x > currentMonster.x &&
-                p.y < currentMonster.y + currentMonster.height &&
-                p.y > currentMonster.y;
-            
-            if (isHit) {
-                currentMonster.health -= p.damage;
-                projectiles.splice(i, 1);
-                checkMonsterDeath();
-            }
-        } else {
-            const isHit = 
-                p.x < player.x + player.width &&
-                p.x > player.x &&
-                p.y < player.y + player.height &&
-                p.y > player.y;
-            
-            if (isHit) {
-                player.health -= p.damage;
-                projectiles.splice(i, 1);
-            }
         }
     }
 }
 
 function drawProjectiles() {
-    for (let proj of projectiles) {
-        proj.draw();
-    }
+    projectiles.forEach((projectile) => projectile.draw());
 }
 
-function drawWeaponSelection() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+function drawScene() {
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
+    drawBackground();
+    drawPlayer();
+    drawEnemy();
+    drawProjectiles();
+    ctx.restore();
+}
+
+function drawGameOver() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(0, 0, gameWidth, gameHeight);
-    
-    ctx.fillStyle = '#00ff00';
-    ctx.font = 'bold 32px Arial';
+    ctx.fillStyle = '#ff5858';
+    ctx.font = 'bold 42px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('Escolha sua Arma', gameWidth / 2, 80);
-    
-    const buttonWidth = 160;
-    const buttonHeight = 60;
-    const spacing = 15;
-    const totalWidth = weapons.length * (buttonWidth + spacing);
-    const startX = (gameWidth - totalWidth) / 2;
-    const startY = gameHeight / 2 - 40;
-    
-    for (let i = 0; i < weapons.length; i++) {
-        const bx = startX + i * (buttonWidth + spacing);
-        const by = startY;
-        const isSelected = i === selectedWeaponIndex;
-        
-        ctx.fillStyle = isSelected ? '#00ff00' : '#003300';
-        ctx.fillRect(bx, by, buttonWidth, buttonHeight);
-        
-        ctx.strokeStyle = isSelected ? '#00ff00' : '#00aa00';
-        ctx.lineWidth = isSelected ? 3 : 2;
-        ctx.strokeRect(bx, by, buttonWidth, buttonHeight);
-        
-        ctx.fillStyle = '#000000';
-        ctx.font = isSelected ? 'bold 13px Arial' : '13px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(weapons[i].name, bx + buttonWidth / 2, by + buttonHeight / 2 + 5);
-    }
-    
-    ctx.fillStyle = '#00d4ff';
-    ctx.font = '14px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('Use as Setas ou Clique para Selecionar', gameWidth / 2, gameHeight - 60);
-    ctx.fillText('Pressione Espaço ou Enter para Confirmar', gameWidth / 2, gameHeight - 30);
-}
-
-function updateHealthBars() {
-    const playerBar = document.getElementById('playerHealth');
-    const monsterBar = document.getElementById('monsterHealth');
-    
-    playerBar.style.width = (player.health / player.maxHealth) * 100 + '%';
-    monsterBar.style.width = (currentMonster.health / currentMonster.maxHealth) * 100 + '%';
-}
-
-function updateUI() {
-    document.getElementById('phaseDisplay').textContent = `Fase: ${phase}`;
-    const weaponName = player.weapon ? player.weapon.name : 'Nenhuma';
-    document.getElementById('statsDisplay').innerHTML = 
-        `Arma: ${weaponName} | Monstros: ${monstersDefeated} | Vida: ${Math.max(0, Math.round(player.health))}/${player.maxHealth} | Upgrades: ${player.totalUpgrades}`;
-}
-
-function spawnNewMonster() {
-    monstersDefeated++;
-    defeatedTotal++;
-    // A cada 3 monstros derrotados, avançar de fase, sem resetar o contador
-    if (monstersDefeated % 3 === 0) {
-        phase++;
-    }
-    projectiles = [];
-    currentMonster = new Monster(phase);
-    isUpgrading = true;
-    selectedUpgradeIndex = 0;
-    prepareUpgradeChoices();
-}
-
-function checkMonsterDeath() {
-    if (currentMonster.health <= 0 && !isUpgrading && !gameOver) {
-        spawnNewMonster();
-    }
-}
-
-function getCombinedUpgrades() {
-    if (currentUpgradeChoices.length === 0) {
-        prepareUpgradeChoices();
-    }
-    return currentUpgradeChoices;
-}
-
-function applySpecial(special) {
-    if (!player.weapon) return;
-    const w = player.weapon;
-    switch (special.effect) {
-        case 'critChance':
-            w.critChance = (w.critChance || 0) + special.value;
-            break;
-        case 'bleed':
-            w.bleed = { damagePerTick: special.value, ticks: 5 };
-            break;
-        case 'spin':
-            w.spin = true;
-            w.range = (w.range || 80) + 20;
-            break;
-        case 'lifeSteal':
-            w.lifeSteal = (w.lifeSteal || 0) + special.value;
-            break;
-        case 'multishot':
-            w.multishot = Math.max(w.multishot || 1, special.value);
-            break;
-        case 'piercing':
-            w.piercing = true;
-            break;
-        case 'fastArrow':
-            w.speed = (w.speed || 5) + special.value;
-            break;
-        case 'explosive':
-            w.explosive = true;
-            break;
-        case 'chain':
-            w.chain = { count: special.value };
-            break;
-        case 'slow':
-            w.slow = special.value;
-            break;
-        case 'aoe':
-            w.aoe = true;
-            break;
-        case 'magicPen':
-            w.damage += special.value;
-            break;
-        case 'auto':
-            w.cooldown = Math.max(1, (w.cooldown || 12) + special.value);
-            break;
-        case 'range':
-            w.range = (w.range || 200) + special.value;
-            break;
-        case 'bulletSpeed':
-            w.speed = (w.speed || 10) + special.value;
-            break;
-    }
-}
-
-function applyUpgrade(index) {
-    const combined = getCombinedUpgrades();
-    const pick = combined[index];
-    if (!pick) return;
-
-    if (pick.special) {
-        applySpecial(pick);
-    } else {
-        player[pick.effect] += pick.value;
-        if (pick.effect === 'maxHealth') player.health += pick.value;
-    }
-
-    player.totalUpgrades++;
-    isUpgrading = false;
-}
-
-function drawUpgradeMenu() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.fillRect(0, 0, gameWidth, gameHeight);
-    
-    ctx.fillStyle = '#00ff00';
-    ctx.font = 'bold 28px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('Escolha um Upgrade', gameWidth / 2, 80);
-    
-    const combined = getCombinedUpgrades();
-    const buttonWidth = 180;
-    const buttonHeight = 60;
-    const spacing = 20;
-    const totalWidth = combined.length * (buttonWidth + spacing);
-    const startX = (gameWidth - totalWidth) / 2;
-    const startY = gameHeight / 2 - 40;
-    
-    for (let i = 0; i < combined.length; i++) {
-        const bx = startX + i * (buttonWidth + spacing);
-        const by = startY;
-        const isSelected = i === selectedUpgradeIndex;
-        
-        ctx.fillStyle = isSelected ? '#00ff00' : '#003300';
-        ctx.fillRect(bx, by, buttonWidth, buttonHeight);
-        
-        ctx.strokeStyle = isSelected ? '#00ff00' : '#00aa00';
-        ctx.lineWidth = isSelected ? 3 : 2;
-        ctx.strokeRect(bx, by, buttonWidth, buttonHeight);
-        
-        ctx.fillStyle = '#000000';
-        ctx.font = isSelected ? 'bold 14px Arial' : '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(combined[i].name, bx + buttonWidth / 2, by + buttonHeight / 2 + 5);
-    }
-
-    // Descrever o item selecionado
-    if (combined[selectedUpgradeIndex]) {
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '12px Arial';
-        ctx.textAlign = 'center';
-        const desc = combined[selectedUpgradeIndex].desc || '';
-        ctx.fillText(desc, gameWidth / 2, startY + buttonHeight + 40);
-    }
-
-    ctx.fillStyle = '#00d4ff';
-    ctx.font = '14px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('Use as Setas ou Clique para Selecionar', gameWidth / 2, gameHeight - 60);
-    ctx.fillText('Pressione Espaço ou Enter para Confirmar', gameWidth / 2, gameHeight - 30);
+    ctx.fillText('GAME OVER', gameWidth / 2, gameHeight / 2 - 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '18px Arial';
+    ctx.fillText('Pressione R para reiniciar', gameWidth / 2, gameHeight / 2 + 32);
 }
 
 function gameLoop() {
-    // Limpar canvas
-    ctx.fillStyle = '#0f1419';
-    ctx.fillRect(0, 0, gameWidth, gameHeight);
-
-    if (isSelectingWeapon) {
-        drawWeaponSelection();
-    } else if (isUpgrading) {
-        // Desenhar o jogo ao fundo
-        player.draw();
-        currentMonster.draw();
-        drawProjectiles();
-        updateHealthBars();
-        updateUI();
-        
-        // Desenhar menu de upgrade
-        drawUpgradeMenu();
-    } else if (!gameOver) {
-        // Atualizar
-        player.update(keys);
-        currentMonster.update(player.x + player.width / 2, player.y + player.height / 2);
+    ctx.clearRect(0, 0, gameWidth, gameHeight);
+    updatePlayer();
+    if (!gameOver && !upgradeMenu.active) {
+        updateEnemy();
         updateProjectiles();
-
-        // Verificar colisão de contato com o monstro (AABB - Axis-Aligned Bounding Box)
-        const isColliding = 
-            player.x < currentMonster.x + currentMonster.width &&
-            player.x + player.width > currentMonster.x &&
-            player.y < currentMonster.y + currentMonster.height &&
-            player.y + player.height > currentMonster.y;
-
-        if (isColliding && currentMonster.attackCooldown === 0) {
-            player.health -= currentMonster.getAttackDamage();
-            currentMonster.attackCooldown = 60;
-        }
-
-        // Verificar morte do monstro
-        checkMonsterDeath();
-
-        // Verificar morte do jogador
-        if (player.health <= 0) {
-            gameOver = true;
-        }
-
-        // Desenhar
-        player.draw();
-        currentMonster.draw();
-        drawProjectiles();
-        updateHealthBars();
-        updateUI();
     }
-
-    // Game Over
-    if (gameOver) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, gameWidth, gameHeight);
-        ctx.fillStyle = '#ff0000';
-        ctx.font = 'bold 40px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('DERROTA!', gameWidth / 2, gameHeight / 2);
-        ctx.font = '20px Arial';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText('Recarregue a página para tentar novamente', gameWidth / 2, gameHeight / 2 + 50);
-    }
-
-    
-
+    camera.update(player.x + player.width / 2, player.y + player.height / 2);
+    drawScene();
+    if (upgradeMenu.active) drawUpgradeMenu();
+    updateUI();
+    if (gameOver) drawGameOver();
     requestAnimationFrame(gameLoop);
 }
 
-// Iniciar com seleção de arma
-isSelectingWeapon = true;
+document.addEventListener('keydown', (event) => {
+    if (upgradeMenu.active) {
+        if (['1', '2', '3'].includes(event.key)) {
+            chooseUpgrade(Number(event.key) - 1);
+        }
+        return;
+    }
+
+    keys[event.key.toLowerCase()] = true;
+    if (event.key.toLowerCase() === 'r') {
+        restartGame();
+    }
+    if (['1', '2', '3', '4'].includes(event.key)) {
+        const index = Number(event.key) - 1;
+        if (weapons[index]) {
+            player.weapon = weapons[index];
+            player.charging = false;
+            player.charge = 0;
+        }
+    }
+});
+
+document.addEventListener('keyup', (event) => {
+    keys[event.key.toLowerCase()] = false;
+});
+
+canvas.addEventListener('mousemove', (event) => {
+    const rect = canvas.getBoundingClientRect();
+    mouseWorld.x = event.clientX - rect.left + camera.x;
+    mouseWorld.y = event.clientY - rect.top + camera.y;
+    updateAimDirection();
+});
+
+canvas.addEventListener('mousedown', (event) => {
+    if (event.button === 0) {
+        startAttack();
+    }
+});
+
+canvas.addEventListener('mouseup', (event) => {
+    if (event.button === 0) {
+        releaseAttack();
+    }
+});
+
+restartGame();
 gameLoop();

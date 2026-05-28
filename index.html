@@ -11,21 +11,21 @@
         <div id="hud">
             <div class="hudSection">
                 <span>Vida:</span>
-                <div id="playerHealth" class="healthBar"></div>
+                <div class="healthBar"><div id="playerHealth" class="healthFill"></div></div>
             </div>
             <div class="hudSection">
                 <span>Monstro:</span>
-                <div id="monsterHealth" class="healthBar"></div>
+                <div class="healthBar"><div id="monsterHealth" class="healthFill monster"></div></div>
             </div>
             <div class="hudSection">
-                <span id="phaseDisplay">Fase: 1</span>
+                <span id="weaponDisplay">Arma: Espada</span>
+            </div>
+            <div class="hudSection">
+                <span id="killCount">Derrotas: 0</span>
             </div>
         </div>
         <canvas id="gameCanvas"></canvas>
-        <div id="gameInfo">
-            <p id="instructions">Escolha sua arma | Use WASD ou Setas para mover | Clique ou Espaço para atacar</p>
-            <div id="statsDisplay"></div>
-        </div>
+        <div id="instructions">Use WASD ou setas para mover. Clique esquerdo para atacar. Troque arma com 1, 2, 3 ou 4.</div>
     </div>
     <script src="script.js"></script>
 </body>
